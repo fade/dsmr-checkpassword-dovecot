@@ -1,0 +1,213 @@
+#!/bin/bash
+# dsmr-smtpauth — manage SMTP-AUTH users in /etc/dovecot/system-passwd.
+#
+# Subcommands:
+#   add <user>     Add a new SMTP-AUTH entry (prompts for password).
+#   del <user>     Remove an entry.
+#   list           List usernames currently authorized for SMTP-AUTH.
+#   passwd <user>  Change the password for an existing entry.
+#   test <user>    Authenticate via the checkpassword-dovecot bridge to
+#                  confirm dovecot accepts the credential end-to-end.
+#
+# Edits are made under flock(2); a tmp file is written, chowned, and renamed
+# atomically so a partial write cannot leave the file in a broken state.
+
+set -euo pipefail
+
+AUTHFILE=/etc/dovecot/system-passwd
+LOCKFILE=/etc/dovecot/.system-passwd.lock
+BRIDGE=/var/qmail/bin/checkpassword-dovecot
+SCHEME=SHA512-CRYPT
+
+die()        { echo "dsmr-smtpauth: error: $*" >&2; exit 1; }
+need_root()  { [ "$(id -u)" -eq 0 ] || die "must run as root"; }
+
+valid_user() {
+    # Permit Unix-style names plus full-email forms.  Conservative on purpose:
+    # the value lands in field 1 of a colon-separated record, so anything
+    # exotic risks corrupting the file or the FORCEAUTHMAILFROM comparison.
+    [[ "$1" =~ ^[A-Za-z0-9._@-]+$ ]] \
+        || die "invalid username '$1'; allowed chars: A-Z a-z 0-9 . _ @ -"
+}
+
+ensure_authfile() {
+    if [ ! -e "$AUTHFILE" ]; then
+        install -m 0640 -o root -g dovecot /dev/null "$AUTHFILE"
+    fi
+    if [ ! -e "$LOCKFILE" ]; then
+        install -m 0640 -o root -g dovecot /dev/null "$LOCKFILE"
+    fi
+}
+
+# Read a password without echo, with confirmation prompt; emit on stdout.
+# All UI goes to stderr so callers can capture the password cleanly.
+read_password() {
+    local prompt="$1" pw1 pw2
+    read -srp "$prompt: " pw1; echo >&2
+    read -srp "Confirm: "  pw2; echo >&2
+    [ -n "$pw1" ]       || die "empty password"
+    [ "$pw1" = "$pw2" ] || die "passwords don't match"
+    printf '%s' "$pw1"
+}
+
+# Hash a password via doveadm pw, feeding the secret on stdin (never argv,
+# so it can't be observed by another process via /proc/<pid>/cmdline).
+hash_password() {
+    local pw="$1"
+    printf '%s\n%s\n' "$pw" "$pw" | doveadm pw -s "$SCHEME" 2>/dev/null
+}
+
+# Replace AUTHFILE atomically with content piped in on stdin.
+# Caller is responsible for holding the lock.
+write_authfile() {
+    local tmp
+    tmp=$(mktemp -p "$(dirname "$AUTHFILE")" .system-passwd.tmp.XXXXXX)
+    cat > "$tmp"
+    chown root:dovecot "$tmp"
+    chmod 0640 "$tmp"
+    mv -f "$tmp" "$AUTHFILE"
+}
+
+# Run the bridge against dovecot with the given credentials.  Returns the
+# bridge's exit code unchanged: 0 = OK, 1 = FAIL, anything else = transient.
+run_bridge() {
+    local user="$1" pw="$2" ts
+    [ -x "$BRIDGE" ] || die "$BRIDGE not installed"
+    ts=$(date +%s)
+
+    # The bridge needs the vpopmail UID to read /var/run/dovecot/auth-client-smtp.
+    if [ "$(id -un)" = "vpopmail" ]; then
+        "$BRIDGE" /bin/true 3< <(printf '%s\0%s\0%s\0' "$user" "$pw" "$ts")
+    elif [ "$(id -u)" -eq 0 ]; then
+        runuser -u vpopmail -- bash -c \
+            '"$0" /bin/true 3< <(printf "%s\0%s\0%s\0" "$1" "$2" "$3")' \
+            "$BRIDGE" "$user" "$pw" "$ts"
+    else
+        die "must run as root or vpopmail to call the bridge"
+    fi
+}
+
+cmd_list() {
+    ensure_authfile
+    awk -F: '/^[^#:]/ { print $1 }' "$AUTHFILE"
+}
+
+cmd_add() {
+    local user="${1:-}"
+    [ -n "$user" ] || die "usage: dsmr-smtpauth add <user>"
+    valid_user "$user"
+    need_root
+    ensure_authfile
+
+    if grep -q "^${user}:" "$AUTHFILE" 2>/dev/null; then
+        die "user '$user' already exists; use 'passwd' to change password"
+    fi
+    if ! id "$user" >/dev/null 2>&1; then
+        echo "warning: '$user' is not a Unix user; adding anyway" >&2
+    fi
+
+    local pw hash
+    pw=$(read_password "Password for $user")
+    hash=$(hash_password "$pw")
+    [ -n "$hash" ] || die "doveadm pw returned no hash"
+
+    (
+        flock -x 9
+        { cat "$AUTHFILE"; printf '%s:%s::::\n' "$user" "$hash"; } | write_authfile
+    ) 9>"$LOCKFILE"
+    echo "Added $user to $AUTHFILE"
+
+    # Self-verify: confirm dovecot agrees the credential is valid.
+    local rc=0
+    run_bridge "$user" "$pw" >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0)  echo "Verified: dovecot accepts the credential." ;;
+        1)  echo "WARNING: dovecot rejected the credential we just added." \
+                 "Reload dovecot and retry: 'systemctl reload dovecot'." >&2 ;;
+        *)  echo "WARNING: bridge returned exit $rc; check dovecot status." >&2 ;;
+    esac
+}
+
+cmd_del() {
+    local user="${1:-}"
+    [ -n "$user" ] || die "usage: dsmr-smtpauth del <user>"
+    valid_user "$user"
+    need_root
+    ensure_authfile
+    if ! grep -q "^${user}:" "$AUTHFILE" 2>/dev/null; then
+        die "user '$user' not in $AUTHFILE"
+    fi
+    (
+        flock -x 9
+        awk -v u="$user" -F: '$1 != u' "$AUTHFILE" | write_authfile
+    ) 9>"$LOCKFILE"
+    echo "Removed $user from $AUTHFILE"
+}
+
+cmd_passwd() {
+    local user="${1:-}"
+    [ -n "$user" ] || die "usage: dsmr-smtpauth passwd <user>"
+    valid_user "$user"
+    need_root
+    ensure_authfile
+    if ! grep -q "^${user}:" "$AUTHFILE" 2>/dev/null; then
+        die "user '$user' not in $AUTHFILE"
+    fi
+    local pw hash
+    pw=$(read_password "New password for $user")
+    hash=$(hash_password "$pw")
+    [ -n "$hash" ] || die "doveadm pw returned no hash"
+
+    (
+        flock -x 9
+        awk -v u="$user" -v h="$hash" -F: \
+            '$1 == u { print u":"h"::::"; next } { print }' \
+            "$AUTHFILE" | write_authfile
+    ) 9>"$LOCKFILE"
+    echo "Updated password for $user"
+}
+
+cmd_test() {
+    local user="${1:-}"
+    [ -n "$user" ] || die "usage: dsmr-smtpauth test <user>"
+    valid_user "$user"
+    local pw rc=0
+    read -srp "Password to test for $user: " pw; echo >&2
+    [ -n "$pw" ] || die "empty password"
+
+    run_bridge "$user" "$pw" >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0)  echo "OK — dovecot accepted credentials for '$user'"; return 0 ;;
+        1)  echo "FAIL — dovecot rejected credentials for '$user'"; return 1 ;;
+        *)  echo "ERROR — bridge exited $rc (transient/internal error)"; return "$rc" ;;
+    esac
+}
+
+usage() {
+    cat <<EOF
+Usage: dsmr-smtpauth <command> [args]
+
+Commands:
+  add <user>     Add a new SMTP-AUTH entry (prompts for password).
+  del <user>     Remove an entry.
+  list           List usernames currently authorized for SMTP-AUTH.
+  passwd <user>  Change the password for an existing entry.
+  test <user>    Authenticate via the bridge end-to-end.
+
+Credentials live in $AUTHFILE.  Use a password DIFFERENT from the user's
+Unix login — SMTP-relay and shell-login have different blast radii and
+should not be coupled.
+EOF
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+    add)              cmd_add    "$@" ;;
+    del|rm|remove)    cmd_del    "$@" ;;
+    list|ls)          cmd_list   "$@" ;;
+    passwd|chpasswd)  cmd_passwd "$@" ;;
+    test|verify)      cmd_test   "$@" ;;
+    -h|--help|help|"") usage ;;
+    *) die "unknown command: $cmd (try: dsmr-smtpauth --help)" ;;
+esac

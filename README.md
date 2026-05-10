@@ -99,6 +99,7 @@ are introduced.
 | Path                                                | Kind            | Notes                                  |
 | --------------------------------------------------- | --------------- | -------------------------------------- |
 | `/var/qmail/bin/checkpassword-dovecot`              | binary          | Runs as the calling UID (vpopmail).    |
+| `/usr/sbin/dsmr-smtpauth`                           | admin tool      | add/del/list/passwd/test for system-passwd. |
 | `/etc/dovecot/conf.d/99-dsmr-smtp-auth.conf`        | conffile        | Adds the auth-client-smtp listener.    |
 | `/usr/share/doc/dsmr-checkpassword-dovecot/README.md` | documentation | This file.                             |
 | `/usr/share/doc/dsmr-checkpassword-dovecot/DESIGN.md` | documentation | Architecture and protocol details.     |
@@ -118,27 +119,53 @@ The postinst:
 
 ## Configure
 
-### 1. Populate `/etc/dovecot/system-passwd`
+### 1. Manage the SMTP-AUTH allow-list with `dsmr-smtpauth`
 
-This is the curated allow-list of system users permitted to SMTP-AUTH. It is
-**not** populated automatically — there is no implicit "everyone in
-`/etc/passwd` may relay" policy.
+`/etc/dovecot/system-passwd` is the curated allow-list of system users
+permitted to SMTP-AUTH. It is **not** populated automatically — there is no
+implicit "everyone in `/etc/passwd` may relay" policy.
 
-Use a credential **separate** from the user's Unix login. SMTP-relay and
+Use a credential **separate** from each user's Unix login. SMTP-relay and
 shell-login have different blast radii; do not couple them.
 
 ```sh
-# Generate a hash and append a row.
-printf 'fade:%s::::\n' "$(doveadm pw -s SHA512-CRYPT)" \
-  | sudo tee -a /etc/dovecot/system-passwd
+# Add a user (prompts for password twice, then auto-verifies via the bridge).
+sudo dsmr-smtpauth add fade
 
-sudo chown root:dovecot /etc/dovecot/system-passwd
-sudo chmod 0640 /etc/dovecot/system-passwd
+# List authorized usernames.
+sudo dsmr-smtpauth list
+
+# Change a password.
+sudo dsmr-smtpauth passwd fade
+
+# Verify a credential end-to-end (prompts for password).
+sudo dsmr-smtpauth test fade
+
+# Remove an entry.
+sudo dsmr-smtpauth del fade
 ```
 
-Format reminder (passwd-file with five trailing colons because we're not
-storing uid/gid/gecos/home/shell here — userdb info comes from
-`userdb passwd { }`):
+The tool:
+
+- **Hashes via `doveadm pw -s SHA512-CRYPT`** with the password fed on stdin
+  — never on the command line, so it cannot be observed via `ps` or
+  `/proc/<pid>/cmdline`.
+- **Edits atomically** under `flock(2)` on a sibling lock file: writes a
+  tmp file, sets ownership/mode, and `mv -f`s it over the live file. A
+  partial write or a concurrent admin invocation cannot leave the file in
+  a broken state.
+- **Auto-verifies on `add`**: after writing, runs the bridge against the
+  fresh credential to confirm dovecot agrees the row is good. A green
+  "Verified" line is the cheap proof that nothing in the chain is
+  misaligned.
+- **Refuses unsafe usernames**: characters outside `[A-Za-z0-9._@-]` are
+  rejected, since they would corrupt the colon-separated record format
+  or the `FORCEAUTHMAILFROM` comparison.
+- **Warns on non-Unix users** added by name (e.g., a typo); proceeds
+  anyway, since the file is policy not paranoia.
+
+The on-disk format is dovecot's passwd-file with five trailing colons
+because userdb info comes from `userdb passwd { }`, not from this file:
 
 ```
 <user>:{SHA512-CRYPT}<hash>::::
@@ -146,8 +173,18 @@ storing uid/gid/gecos/home/shell here — userdb info comes from
 
 Dovecot's passwd-file passdb in this stack is configured with
 `auth_username_format = %{user|username}`, which strips the domain before
-looking up the file. That means clients can AUTH as either bare `fade` or
+looking up the file. Clients can therefore AUTH as either bare `fade` or
 `fade@deepsky.com`; both resolve to the row keyed by `fade`.
+
+If you must edit `/etc/dovecot/system-passwd` by hand for some reason, the
+manual recipe is:
+
+```sh
+printf 'fade:%s::::\n' "$(doveadm pw -s SHA512-CRYPT)" \
+  | sudo tee -a /etc/dovecot/system-passwd
+sudo chown root:dovecot /etc/dovecot/system-passwd
+sudo chmod 0640 /etc/dovecot/system-passwd
+```
 
 ### 2. Verify
 

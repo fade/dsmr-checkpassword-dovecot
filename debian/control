@@ -34,12 +34,14 @@ Description: SMTP-AUTH bridge from qmail-smtpd to dovecot's auth-client
  .
  On install this package:
    - Installs /var/qmail/bin/checkpassword-dovecot
+   - Installs /usr/sbin/dsmr-smtpauth, an admin tool with add/del/list/
+     passwd/test subcommands for /etc/dovecot/system-passwd
    - Drops a dovecot conf snippet exposing an auth-client listener that
      is readable by the vpopmail UID under which qmail-smtpd runs
    - Reloads dovecot so the new listener appears
    - Cycles qmail-submission so the run script (when paired with
      dsmr-qmail-run >= 1.0-9) picks up the bridge
  .
- An allow-list of system users authorised for SMTP-AUTH must be
- maintained at /etc/dovecot/system-passwd.  Use a credential separate
- from the user's Unix login password.
+ An allow-list of system users authorised for SMTP-AUTH is maintained at
+ /etc/dovecot/system-passwd via the dsmr-smtpauth(8) tool.  Use credentials
+ separate from the users' Unix login passwords.

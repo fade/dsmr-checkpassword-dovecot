@@ -1,3 +1,13 @@
+dsmr-checkpassword-dovecot (1.0-2) trixie; urgency=medium
+
+  * Add dsmr-smtpauth(8) admin tool for managing /etc/dovecot/system-passwd.
+    Subcommands: add, del, list, passwd, test.  Atomic edits under flock,
+    SHA512-CRYPT hashing via doveadm pw with the password fed on stdin
+    (never the command line).  The 'add' subcommand auto-verifies the
+    new credential by running the bridge end-to-end against dovecot.
+
+ -- Brian O'Reilly <fade@deepsky.com>  Sun, 10 May 2026 16:30:00 -0400
+
 dsmr-checkpassword-dovecot (1.0-1) trixie; urgency=medium
 
   * Initial release.
