@@ -1,0 +1,45 @@
+Source: dsmr-checkpassword-dovecot
+Section: mail
+Priority: optional
+Maintainer: Brian O'Reilly <fade@deepsky.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/fade/dsmr-checkpassword-dovecot
+Vcs-Git: https://github.com/fade/dsmr-checkpassword-dovecot.git
+Vcs-Browser: https://github.com/fade/dsmr-checkpassword-dovecot
+
+Package: dsmr-checkpassword-dovecot
+Architecture: any
+Depends: ${shlibs:Depends},
+ ${misc:Depends},
+ dovecot-core (>= 2.4),
+ qmail (>= 1.06.3)
+Recommends: dsmr-qmail-run (>= 1.0-9),
+ dovecot-vpopmail
+Description: SMTP-AUTH bridge from qmail-smtpd to dovecot's auth-client
+ checkpassword-dovecot is a small DJB-style checkpassword program that
+ forwards SMTP-AUTH credentials presented to qmail-smtpd to dovecot's
+ auth-client protocol over a Unix socket.  The bridge lets one chained
+ dovecot passdb stack — vpopmail SQL, /etc/dovecot/system-passwd, PAM —
+ serve as the single source of truth for both IMAP login and SMTP
+ submission authentication.
+ .
+ In the DSMR mail stack qmail-submission's checkpassword program is
+ vchkpw, which only knows about vpopmail virtual users.  Curated system
+ users (e.g., shell accounts who need to relay through the host's mail
+ domain) cannot SMTP-AUTH unless that virtual-only constraint is
+ relaxed.  This package replaces vchkpw on the submission service with
+ the bridge, while leaving inbound port 25 untouched.
+ .
+ On install this package:
+   - Installs /var/qmail/bin/checkpassword-dovecot
+   - Drops a dovecot conf snippet exposing an auth-client listener that
+     is readable by the vpopmail UID under which qmail-smtpd runs
+   - Reloads dovecot so the new listener appears
+   - Cycles qmail-submission so the run script (when paired with
+     dsmr-qmail-run >= 1.0-9) picks up the bridge
+ .
+ An allow-list of system users authorised for SMTP-AUTH must be
+ maintained at /etc/dovecot/system-passwd.  Use a credential separate
+ from the user's Unix login password.

@@ -1,0 +1,19 @@
+# build artifacts
+checkpassword-dovecot
+*.o
+
+# debian build outputs
+debian/.debhelper/
+debian/dsmr-checkpassword-dovecot/
+debian/dsmr-checkpassword-dovecot.substvars
+debian/dsmr-checkpassword-dovecot.debhelper.log
+debian/debhelper-build-stamp
+debian/files
+debian/*.log
+
+# parent-dir build outputs (dpkg-buildpackage drops them next door)
+../dsmr-checkpassword-dovecot_*.deb
+../dsmr-checkpassword-dovecot_*.buildinfo
+../dsmr-checkpassword-dovecot_*.changes
+../dsmr-checkpassword-dovecot_*.dsc
+../dsmr-checkpassword-dovecot_*.tar.*

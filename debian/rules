@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+# Pull in dpkg-buildflags so hardening flags propagate to cc.
+include /usr/share/dpkg/buildflags.mk
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	$(MAKE) install \
+	    DESTDIR=$(CURDIR)/debian/dsmr-checkpassword-dovecot \
+	    PREFIX=/var/qmail

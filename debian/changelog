@@ -1,0 +1,12 @@
+dsmr-checkpassword-dovecot (1.0-1) trixie; urgency=medium
+
+  * Initial release.
+  * Bridges qmail-smtpd checkpassword-program protocol to dovecot's
+    auth-client over a Unix socket, letting qmail submission share
+    dovecot's chained passdb stack (vpopmail SQL, /etc/dovecot/system-passwd,
+    PAM) for SMTP-AUTH.
+  * Ships /etc/dovecot/conf.d/99-dsmr-smtp-auth.conf, an auth-client
+    listener readable by vpopmail:vchkpw.
+  * Reloads dovecot and cycles qmail-submission on configure.
+
+ -- Brian O'Reilly <fade@deepsky.com>  Sun, 10 May 2026 11:00:00 -0400
