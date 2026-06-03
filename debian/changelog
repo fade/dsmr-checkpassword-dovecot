@@ -1,3 +1,17 @@
+dsmr-checkpassword-dovecot (1.0-3) trixie; urgency=medium
+
+  * dsmr-smtpauth: populate uid/gid/home/shell from getent passwd when the
+    user is a Unix account, so /etc/dovecot/system-passwd doubles as the
+    userdb for IMAP/Maildir access.  Entries of the form user:hash:::: are
+    sufficient for SMTP AUTH but break dovecot 2.4 IMAP because mail_path
+    (~/Maildir, set by 99-vpopmail-mail.conf) requires the userdb to return
+    a home directory.  Non-Unix users continue to get the minimal hash-only
+    entry — they remain authorized for SMTP relay with no Maildir access.
+  * dsmr-smtpauth passwd: preserve uid/gid/home/shell from the existing
+    record (or refresh from getent passwd) instead of overwriting them.
+
+ -- Brian O'Reilly <fade@deepsky.com>  Tue, 12 May 2026 16:45:00 -0400
+
 dsmr-checkpassword-dovecot (1.0-2) trixie; urgency=medium
 
   * Add dsmr-smtpauth(8) admin tool for managing /etc/dovecot/system-passwd.

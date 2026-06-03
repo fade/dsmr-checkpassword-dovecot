@@ -9,6 +9,11 @@
 #   test <user>    Authenticate via the checkpassword-dovecot bridge to
 #                  confirm dovecot accepts the credential end-to-end.
 #
+# Entries for Unix users carry uid/gid/home/shell pulled from getent passwd so
+# the file also serves dovecot's userdb chain for IMAP/Maildir access. Entries
+# for non-Unix users (relay-only credentials) carry only the password hash —
+# those users can authenticate for SMTP AUTH but have no Maildir to access.
+#
 # Edits are made under flock(2); a tmp file is written, chowned, and renamed
 # atomically so a partial write cannot leave the file in a broken state.
 
@@ -57,6 +62,27 @@ hash_password() {
     printf '%s\n%s\n' "$pw" "$pw" | doveadm pw -s "$SCHEME" 2>/dev/null
 }
 
+# Compose a passwd(5)-style entry line for the given user and hash.
+# For Unix users, fields 3-7 are filled from getent passwd so dovecot's
+# userdb chain can return uid/gid/home — required for IMAP because
+# 99-vpopmail-mail.conf sets mail_path=~/Maildir, which only expands when
+# the userdb supplies a home directory. For non-Unix users (relay-only
+# credentials) the trailing fields are left empty: SMTP AUTH still works,
+# IMAP/Maildir is intentionally inaccessible.
+compose_entry() {
+    local user="$1" hash="$2"
+    local pw_entry uid gid home shell
+    if pw_entry=$(getent passwd "$user" 2>/dev/null) && [ -n "$pw_entry" ]; then
+        uid=$(echo "$pw_entry" | cut -d: -f3)
+        gid=$(echo "$pw_entry" | cut -d: -f4)
+        home=$(echo "$pw_entry" | cut -d: -f6)
+        shell=$(echo "$pw_entry" | cut -d: -f7)
+        printf '%s:%s:%s:%s::%s:%s\n' "$user" "$hash" "$uid" "$gid" "$home" "$shell"
+    else
+        printf '%s:%s::::\n' "$user" "$hash"
+    fi
+}
+
 # Replace AUTHFILE atomically with content piped in on stdin.
 # Caller is responsible for holding the lock.
 write_authfile() {
@@ -103,7 +129,8 @@ cmd_add() {
         die "user '$user' already exists; use 'passwd' to change password"
     fi
     if ! id "$user" >/dev/null 2>&1; then
-        echo "warning: '$user' is not a Unix user; adding anyway" >&2
+        echo "note: '$user' is not a Unix user; entry will authorize SMTP AUTH only" >&2
+        echo "      (no uid/gid/home — dovecot IMAP/Maildir won't work for this user)" >&2
     fi
 
     local pw hash
@@ -113,7 +140,7 @@ cmd_add() {
 
     (
         flock -x 9
-        { cat "$AUTHFILE"; printf '%s:%s::::\n' "$user" "$hash"; } | write_authfile
+        { cat "$AUTHFILE"; compose_entry "$user" "$hash"; } | write_authfile
     ) 9>"$LOCKFILE"
     echo "Added $user to $AUTHFILE"
 
@@ -153,15 +180,16 @@ cmd_passwd() {
     if ! grep -q "^${user}:" "$AUTHFILE" 2>/dev/null; then
         die "user '$user' not in $AUTHFILE"
     fi
-    local pw hash
+    local pw hash new_line
     pw=$(read_password "New password for $user")
     hash=$(hash_password "$pw")
     [ -n "$hash" ] || die "doveadm pw returned no hash"
+    new_line=$(compose_entry "$user" "$hash")
 
     (
         flock -x 9
-        awk -v u="$user" -v h="$hash" -F: \
-            '$1 == u { print u":"h"::::"; next } { print }' \
+        awk -v u="$user" -v new="$new_line" -F: \
+            '$1 == u { print new; next } { print }' \
             "$AUTHFILE" | write_authfile
     ) 9>"$LOCKFILE"
     echo "Updated password for $user"
@@ -194,9 +222,11 @@ Commands:
   passwd <user>  Change the password for an existing entry.
   test <user>    Authenticate via the bridge end-to-end.
 
-Credentials live in $AUTHFILE.  Use a password DIFFERENT from the user's
-Unix login — SMTP-relay and shell-login have different blast radii and
-should not be coupled.
+Credentials live in $AUTHFILE.  For Unix users, the entry also carries
+uid/gid/home so dovecot's userdb chain serves IMAP/Maildir from this
+same file.  Use a password DIFFERENT from the user's Unix login — mail
+access and shell-login have different blast radii and should not be
+coupled to the same secret.
 EOF
 }
 
