@@ -25,12 +25,12 @@ populations.
 
 ### A. Move the rcpthosts-only domain into vpopmail
 
-Add `deepsky.com` (or whatever domain hosts the system-user senders) to
+Add `example.com` (or whatever domain hosts the system-user senders) to
 vpopmail's `virtualdomains`, create a vpopmail account for each system
 sender, and let `vchkpw` continue to do all the work.
 
 **Rejected** because in the existing DSMR deployment, `~fade/.qmail-*` files
-route ~150 sub-addressed extensions for `deepsky.com` mail through system
+route ~150 sub-addressed extensions for `example.com` mail through system
 delivery. Moving the domain into vpopmail collides with that delivery path:
 either every extension must be migrated to a vpopmail alias (large surface
 area, easy to lose mail in the migration), or the system aliases must be

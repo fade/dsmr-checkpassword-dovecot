@@ -1,3 +1,12 @@
+dsmr-checkpassword-dovecot (1.0-5) trixie; urgency=medium
+
+  * Generalize the documentation for public reuse: host, domain, and address
+    references that named one specific production deployment are replaced with
+    neutral example.* equivalents in the topic manual, README, and design
+    notes.  No behavioural change.
+
+ -- Brian O'Reilly <fade@deepsky.com>  Fri, 05 Jun 2026 16:00:00 +0000
+
 dsmr-checkpassword-dovecot (1.0-4) trixie; urgency=medium
 
   * Documentation now derives from an org-mode source of truth at build time:

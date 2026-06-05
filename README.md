@@ -205,13 +205,13 @@ ps -ef | grep qmail-smtpd | grep checkpassword-dovecot
 
 ```sh
 # vpopmail user (still works through the new bridge)
-swaks --to ext@example.com --from fade@deepsky.ca \
-      --server outrider.deepsky.com --port 587 --tls \
-      --auth LOGIN --auth-user fade@deepsky.ca --auth-password '...'
+swaks --to ext@example.com --from fade@example.net \
+      --server tatooine.example.com --port 587 --tls \
+      --auth LOGIN --auth-user fade@example.net --auth-password '...'
 
 # system user (newly authenticatable)
 swaks --to ext@example.com --from fade@deepsky.com \
-      --server outrider.deepsky.com --port 587 --tls \
+      --server tatooine.example.com --port 587 --tls \
       --auth LOGIN --auth-user fade@deepsky.com --auth-password '...'
 
 # bad password — should still fail with 535
