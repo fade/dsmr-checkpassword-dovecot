@@ -1,0 +1,79 @@
+#+TITLE: dsmr-smtpauth
+
+* NAME
+dsmr-smtpauth - manage the SMTP-AUTH allow-list of system users
+
+* SYNOPSIS
+*dsmr-smtpauth* *add* /user/
+
+*dsmr-smtpauth* *del* /user/
+
+*dsmr-smtpauth* *list*
+
+*dsmr-smtpauth* *passwd* /user/
+
+*dsmr-smtpauth* *test* /user/
+
+* DESCRIPTION
+*dsmr-smtpauth* curates =/etc/dovecot/system-passwd=, the allow-list of system
+(non-vpopmail) users permitted to authenticate for SMTP submission through the
+*checkpassword-dovecot(8)* bridge. The file is *not* populated automatically:
+there is no implicit "every account in =/etc/passwd= may relay" policy — only
+the listed users may SMTP-AUTH.
+
+Use a credential *separate* from the user's Unix login password. SMTP relay and
+shell login have different blast radii and should not be coupled to one secret.
+
+Passwords are hashed with =doveadm pw -s SHA512-CRYPT=, fed on standard input
+so the secret never appears in =argv= or =/proc/<pid>/cmdline=. Edits are made
+under =flock(2)=: a temp file is written, its owner/mode set
+(=root:dovecot=, =0640=), then atomically renamed over the live file, so a
+partial write or a concurrent invocation cannot leave the file broken.
+
+For a user that exists in =/etc/passwd=, the entry also carries
+uid/gid/home/shell pulled from =getent passwd=, so dovecot's userdb chain can
+serve IMAP/Maildir from the same file (=mail_path=~/Maildir= needs the home).
+For a non-Unix name (a relay-only credential) the trailing fields are left
+empty: SMTP-AUTH works, IMAP/Maildir is intentionally unavailable.
+
+* COMMANDS
+- *add* /user/ :: Add a new entry. Prompts for the password twice, then
+  self-verifies by running the *checkpassword-dovecot(8)* bridge end-to-end so a
+  green /Verified/ line proves dovecot agrees the row is good. Fails if the user
+  already exists (use *passwd*). Requires root.
+- *del* /user/ :: Remove the user's entry. Requires root. (Aliases: *rm*,
+  *remove*.)
+- *list* :: Print the usernames currently authorized. (Alias: *ls*.)
+- *passwd* /user/ :: Change an existing user's password, preserving (or
+  refreshing from =getent passwd=) the uid/gid/home/shell fields. Requires root.
+  (Alias: *chpasswd*.)
+- *test* /user/ :: Prompt for a password and authenticate it through the bridge
+  against dovecot, reporting OK / FAIL / transient error without modifying the
+  file. (Alias: *verify*.)
+
+* USERNAME FORM
+Usernames must match =[A-Za-z0-9._@-]+= (bare =fade= or full =fade@deepsky.com=);
+anything else is rejected because the value lands in field 1 of a
+colon-separated record and would corrupt the format or the =FORCEAUTHMAILFROM=
+comparison. The passwd-file passdb is configured with
+=auth_username_format = %{user|username}=, so a client may AUTH as either form;
+both resolve to the row keyed by the bare name.
+
+* EXIT STATUS
+=0= on success. *test* exits =1= when dovecot rejects the credential and
+non-zero (the bridge's code) on a transient error. Usage and validation errors
+exit non-zero with a diagnostic on standard error.
+
+* FILES
+- =/etc/dovecot/system-passwd= :: the allow-list, owner =root:dovecot=, mode
+  =0640=. Record form =<user>:{SHA512-CRYPT}<hash>[:uid:gid::home:shell]=.
+- =/etc/dovecot/.system-passwd.lock= :: =flock= file guarding atomic edits.
+- =/var/qmail/bin/checkpassword-dovecot= :: the bridge invoked by *add* and
+  *test* for end-to-end verification.
+
+* SEE ALSO
+*checkpassword-dovecot(8)*, *doveadm-pw(1)*, *qmail-smtpd(8)*
+
+For the theory of operation, configuration, and debugging hints, see the
+/dsmr-checkpassword-dovecot/ info manual
+(=info dsmr-checkpassword-dovecot=) or the stack documentation website.

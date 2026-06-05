@@ -2,6 +2,12 @@
 checkpassword-dovecot
 *.o
 
+# generated documentation (org is the source of truth)
+man/*.8
+doc/dsmr-checkpassword-dovecot.texi
+doc/dsmr-checkpassword-dovecot.info
+doc/dsmr-checkpassword-dovecot.html
+
 # debian build outputs
 debian/.debhelper/
 debian/dsmr-checkpassword-dovecot/
@@ -17,3 +23,6 @@ debian/*.log
 ../dsmr-checkpassword-dovecot_*.changes
 ../dsmr-checkpassword-dovecot_*.dsc
 ../dsmr-checkpassword-dovecot_*.tar.*
+
+# emacs backups
+*~

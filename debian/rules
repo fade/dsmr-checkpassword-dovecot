@@ -3,10 +3,44 @@
 # Pull in dpkg-buildflags so hardening flags propagate to cc.
 include /usr/share/dpkg/buildflags.mk
 
+# Documentation is generated from the org-mode source of truth at build time:
+#   doc/man/<name>.<sec>.org -> man/<name>.<sec>             (pandoc, groff man)
+#   doc/dsmr-checkpassword-dovecot.org -> .info              (emacs ox-texinfo + makeinfo)
+#                                      -> .html              (emacs ox-html, doc website)
+# Generators (pandoc, emacs, texinfo) are Build-Depends only.
+EMACS ?= emacs
+TOPIC = doc/dsmr-checkpassword-dovecot
+
 %:
 	dh $@
+
+override_dh_auto_build:
+	# Compile the bridge (Makefile's default target).
+	dh_auto_build
+	# Generate man pages, the GNU info manual, and the HTML doc page from org.
+	mkdir -p man
+	set -e; for m in doc/man/*.org; do \
+	    base=$$(basename "$$m" .org); \
+	    name=$${base%.*}; sec=$${base##*.}; \
+	    pandoc -f org -t man -s \
+	        -M title="$$name" -M section="$$sec" -M date="2026" \
+	        -M header="DSMR mail stack" -M footer="dsmr-checkpassword-dovecot" \
+	        "$$m" -o "man/$$base"; \
+	done
+	$(EMACS) --batch -Q \
+	    --eval "(require 'ox-texinfo)" \
+	    --eval "(with-current-buffer (find-file-noselect \"$(TOPIC).org\") (org-texinfo-export-to-texinfo))"
+	makeinfo --no-split "$(TOPIC).texi" -o "$(TOPIC).info"
+	$(EMACS) --batch -Q \
+	    --eval "(require 'ox-html)" \
+	    --eval "(setq org-html-validation-link nil)" \
+	    --eval "(with-current-buffer (find-file-noselect \"$(TOPIC).org\") (org-html-export-to-html))"
 
 override_dh_auto_install:
 	$(MAKE) install \
 	    DESTDIR=$(CURDIR)/debian/dsmr-checkpassword-dovecot \
 	    PREFIX=/var/qmail
+
+override_dh_auto_clean:
+	dh_auto_clean
+	rm -f man/*.8 "$(TOPIC).texi" "$(TOPIC).info" "$(TOPIC).html"
