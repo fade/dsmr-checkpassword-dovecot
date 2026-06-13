@@ -14,6 +14,12 @@
 # for non-Unix users (relay-only credentials) carry only the password hash —
 # those users can authenticate for SMTP AUTH but have no Maildir to access.
 #
+# On add/passwd for a Unix user, RELAY_AUTH.txt is written to the user's home
+# directory holding the cleartext password and ready-to-use IMAP/SMTP client
+# settings (with step-by-step Thunderbird and Apple Mail instructions). It is
+# mode 0600, owned by the user, refreshed on every password change, and removed
+# by del so a revoked credential leaves nothing behind.
+#
 # Edits are made under flock(2); a tmp file is written, chowned, and renamed
 # atomically so a partial write cannot leave the file in a broken state.
 
@@ -23,6 +29,9 @@ AUTHFILE=/etc/dovecot/system-passwd
 LOCKFILE=/etc/dovecot/.system-passwd.lock
 BRIDGE=/var/qmail/bin/checkpassword-dovecot
 SCHEME=SHA512-CRYPT
+QCTL=/var/qmail/control
+RELAY_AUTH_NAME=RELAY_AUTH.txt
+RELAY_AUTH_MARKER="# dsmr-smtpauth: SMTP relay credential"
 
 die()        { echo "dsmr-smtpauth: error: $*" >&2; exit 1; }
 need_root()  { [ "$(id -u)" -eq 0 ] || die "must run as root"; }
@@ -94,6 +103,124 @@ write_authfile() {
     mv -f "$tmp" "$AUTHFILE"
 }
 
+# The FQDN clients connect to for IMAP and submission. control/me is the qmail
+# host identity; fall back to the system FQDN if it is missing.
+derive_mailhost() {
+    local h=""
+    [ -s "$QCTL/me" ] && h=$(head -1 "$QCTL/me" | tr -d '[:space:]')
+    [ -n "$h" ] || h=$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)
+    printf '%s' "$h"
+}
+
+# The mail domain in a system user's address. On a hybrid host that is the first
+# localfirstdomain (system user 'alice' receives as alice@<that domain>); on a
+# plain system host it is control/me. A leading-dot wildcard entry is stripped.
+derive_maildomain() {
+    local d=""
+    if [ -s "$QCTL/localfirstdomains" ]; then
+        d=$(grep -vE '^[[:space:]]*(#|$)' "$QCTL/localfirstdomains" \
+              | head -1 | sed 's/^\.//' | tr -d '[:space:]')
+    fi
+    [ -n "$d" ] || { [ -s "$QCTL/me" ] && d=$(head -1 "$QCTL/me" | tr -d '[:space:]'); }
+    printf '%s' "$d"
+}
+
+# Write <home>/RELAY_AUTH.txt for a Unix user: the cleartext password plus
+# client-config instructions. Best-effort — a failure here warns but never fails
+# the password change that already succeeded. No-op for a non-Unix (relay-only)
+# credential, which has no home directory.
+write_relay_auth() {
+    local user="$1" pw="$2"
+    local pw_entry uid gid home host domain addr file tmp date
+    pw_entry=$(getent passwd "$user" 2>/dev/null) || return 0
+    [ -n "$pw_entry" ] || return 0
+    uid=$(echo "$pw_entry" | cut -d: -f3)
+    gid=$(echo "$pw_entry" | cut -d: -f4)
+    home=$(echo "$pw_entry" | cut -d: -f6)
+    if [ -z "$home" ] || [ ! -d "$home" ]; then
+        echo "note: no home directory for '$user'; skipped $RELAY_AUTH_NAME" >&2
+        return 0
+    fi
+
+    host=$(derive_mailhost)
+    domain=$(derive_maildomain)
+    addr="$user${domain:+@$domain}"
+    file="$home/$RELAY_AUTH_NAME"
+    date=$(date +%Y-%m-%d)
+
+    tmp=$(mktemp -p "$home" .relay-auth.XXXXXX 2>/dev/null) || {
+        echo "warning: could not create $file (home not writable?)" >&2
+        return 0
+    }
+    cat > "$tmp" <<EOF
+$RELAY_AUTH_MARKER — KEEP PRIVATE
+This is a mail-only password, separate from your Unix login password. It is
+rewritten every time your mail password is set with dsmr-smtpauth.
+
+  Email address:  $addr
+  Password:       $pw
+
+Server settings (use the SAME address and password for both):
+
+  Sending (SMTP submission)   server $host   port 587   security STARTTLS
+  Reading (IMAP)              server $host   port 993   security SSL/TLS
+
+Authentication is required for sending; the From address must be the address
+above. If the server's certificate is self-signed, the client warns once —
+trust/accept it to continue.
+
+------------------------------------------------------------------------
+Thunderbird
+  1. Account Settings -> Account Actions -> Add Mail Account.
+  2. Your name: anything.  Email address: $addr.  Password: (above).
+  3. Click "Configure manually" and set both servers:
+       Incoming   IMAP   Server $host   Port 993   SSL/TLS    Normal password
+       Outgoing   SMTP   Server $host   Port 587   STARTTLS   Normal password
+       Username (incoming AND outgoing): $addr
+  4. Re-test, then Done.  Accept the certificate if prompted.
+
+Apple Mail (macOS)
+  1. Mail -> Settings -> Accounts -> "+" -> Other Mail Account.
+  2. Name: anything.  Email: $addr.  Password: (above).  Sign In.
+  3. Auto-detect fails; continue to the manual screen and set:
+       Account type:           IMAP
+       Incoming mail server:   $host
+       Outgoing mail server:   $host
+       User name:              $addr
+  4. Open Accounts -> (this account) -> Server Settings and turn OFF
+     "Automatically manage connection settings", then set:
+       Incoming (IMAP):  Port 993, Use TLS/SSL ON, Authentication Password
+       Outgoing (SMTP):  Port 587, Use TLS/SSL ON, Authentication Password
+  5. Save.  Trust the certificate if prompted.
+------------------------------------------------------------------------
+Generated $date by dsmr-smtpauth on $host.
+EOF
+    chown "$uid:$gid" "$tmp" 2>/dev/null || true
+    chmod 0600 "$tmp"        2>/dev/null || true
+    if mv -f "$tmp" "$file" 2>/dev/null; then
+        echo "Wrote $file (mode 0600, owner $user)"
+    else
+        rm -f "$tmp" 2>/dev/null || true
+        echo "warning: could not write $file" >&2
+    fi
+}
+
+# Remove a RELAY_AUTH.txt that this tool generated (identified by its marker
+# line), so revoking a credential with del leaves no stale password behind.
+# Best-effort and conservative: a file without our marker is left untouched.
+remove_relay_auth() {
+    local user="$1" home file
+    home=$(getent passwd "$user" 2>/dev/null | cut -d: -f6) || return 0
+    [ -n "$home" ] || return 0
+    file="$home/$RELAY_AUTH_NAME"
+    [ -f "$file" ] || return 0
+    if head -1 "$file" 2>/dev/null | grep -q "^${RELAY_AUTH_MARKER}"; then
+        rm -f "$file" && echo "Removed $file"
+    else
+        echo "note: $file not generated by dsmr-smtpauth; left in place" >&2
+    fi
+}
+
 # Run the bridge against dovecot with the given credentials.  Returns the
 # bridge's exit code unchanged: 0 = OK, 1 = FAIL, anything else = transient.
 run_bridge() {
@@ -153,6 +280,8 @@ cmd_add() {
                  "Reload dovecot and retry: 'systemctl reload dovecot'." >&2 ;;
         *)  echo "WARNING: bridge returned exit $rc; check dovecot status." >&2 ;;
     esac
+
+    write_relay_auth "$user" "$pw"
 }
 
 cmd_del() {
@@ -169,6 +298,8 @@ cmd_del() {
         awk -v u="$user" -F: '$1 != u' "$AUTHFILE" | write_authfile
     ) 9>"$LOCKFILE"
     echo "Removed $user from $AUTHFILE"
+
+    remove_relay_auth "$user"
 }
 
 cmd_passwd() {
@@ -193,6 +324,8 @@ cmd_passwd() {
             "$AUTHFILE" | write_authfile
     ) 9>"$LOCKFILE"
     echo "Updated password for $user"
+
+    write_relay_auth "$user" "$pw"
 }
 
 cmd_test() {
@@ -227,6 +360,9 @@ uid/gid/home so dovecot's userdb chain serves IMAP/Maildir from this
 same file.  Use a password DIFFERENT from the user's Unix login — mail
 access and shell-login have different blast radii and should not be
 coupled to the same secret.
+
+add/passwd also write ~/$RELAY_AUTH_NAME (mode 0600, owned by the user) with
+the password and IMAP/SMTP client-setup instructions; del removes it.
 EOF
 }
 

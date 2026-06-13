@@ -36,16 +36,33 @@ serve IMAP/Maildir from the same file (=mail_path=~/Maildir= needs the home).
 For a non-Unix name (a relay-only credential) the trailing fields are left
 empty: SMTP-AUTH works, IMAP/Maildir is intentionally unavailable.
 
+* RELAY_AUTH.txt
+On *add* and *passwd* for a Unix user, a =RELAY_AUTH.txt= is written to that
+user's home directory containing the cleartext password just set, the server
+hostname and ports, and step-by-step client-setup instructions for Thunderbird
+and Apple Mail. The file is mode =0600= owned by the user, rewritten on every
+password change, and removed by *del* (only if it still carries the tool's
+marker line) so a revoked credential leaves no stale password behind. Users
+with no home directory (relay-only credentials) are skipped, and a write
+failure is a non-fatal warning — the password change itself still succeeds.
+
+The server hostname is taken from =control/me=; the address domain from the
+first =control/localfirstdomains= entry (falling back to =control/me=), so the
+advertised address is =<user>@<domain>= — the form that satisfies both the
+IMAP/SMTP passdb lookup and the =FORCEAUTHMAILFROM= envelope-sender check.
+
 * COMMANDS
 - *add* /user/ :: Add a new entry. Prompts for the password twice, then
   self-verifies by running the *checkpassword-dovecot(8)* bridge end-to-end so a
-  green /Verified/ line proves dovecot agrees the row is good. Fails if the user
-  already exists (use *passwd*). Requires root.
-- *del* /user/ :: Remove the user's entry. Requires root. (Aliases: *rm*,
-  *remove*.)
+  green /Verified/ line proves dovecot agrees the row is good. For a Unix user,
+  also writes =RELAY_AUTH.txt= to the home directory (see below). Fails if the
+  user already exists (use *passwd*). Requires root.
+- *del* /user/ :: Remove the user's entry and its =RELAY_AUTH.txt= (if generated
+  by this tool). Requires root. (Aliases: *rm*, *remove*.)
 - *list* :: Print the usernames currently authorized. (Alias: *ls*.)
 - *passwd* /user/ :: Change an existing user's password, preserving (or
-  refreshing from =getent passwd=) the uid/gid/home/shell fields. Requires root.
+  refreshing from =getent passwd=) the uid/gid/home/shell fields. For a Unix
+  user, rewrites =RELAY_AUTH.txt= with the new password. Requires root.
   (Alias: *chpasswd*.)
 - *test* /user/ :: Prompt for a password and authenticate it through the bridge
   against dovecot, reporting OK / FAIL / transient error without modifying the
@@ -70,6 +87,10 @@ exit non-zero with a diagnostic on standard error.
 - =/etc/dovecot/.system-passwd.lock= :: =flock= file guarding atomic edits.
 - =/var/qmail/bin/checkpassword-dovecot= :: the bridge invoked by *add* and
   *test* for end-to-end verification.
+- =~/RELAY_AUTH.txt= :: per-user credential and client-setup file, mode =0600=,
+  owner the user; written by *add*/*passwd*, removed by *del*.
+- =/var/qmail/control/me=, =/var/qmail/control/localfirstdomains= :: read to
+  derive the server hostname and address domain printed in =RELAY_AUTH.txt=.
 
 * SEE ALSO
 *checkpassword-dovecot(8)*, *doveadm-pw(1)*, *qmail-smtpd(8)*
