@@ -46,7 +46,10 @@ marker line) so a revoked credential leaves no stale password behind. Users
 with no home directory (relay-only credentials) are skipped, and a write
 failure is a non-fatal warning — the password change itself still succeeds.
 
-The server hostname is taken from =control/me=; the address domain from the
+The server hostname is taken from =control/mailhost= when present, else
+=control/me=. Set =control/mailhost= when the name clients connect to — the one
+the TLS certificate is valid for — differs from the MTA identity in =control/me=
+(for example a dedicated =mail.<domain>=). The address domain comes from the
 first =control/localfirstdomains= entry (falling back to =control/me=), so the
 advertised address is =<user>@<domain>= — the form that satisfies both the
 IMAP/SMTP passdb lookup and the =FORCEAUTHMAILFROM= envelope-sender check.
@@ -89,8 +92,10 @@ exit non-zero with a diagnostic on standard error.
   *test* for end-to-end verification.
 - =~/RELAY_AUTH.txt= :: per-user credential and client-setup file, mode =0600=,
   owner the user; written by *add*/*passwd*, removed by *del*.
-- =/var/qmail/control/me=, =/var/qmail/control/localfirstdomains= :: read to
-  derive the server hostname and address domain printed in =RELAY_AUTH.txt=.
+- =/var/qmail/control/mailhost=, =/var/qmail/control/me=,
+  =/var/qmail/control/localfirstdomains= :: read to derive the server hostname
+  (=mailhost= preferred, else =me=) and address domain printed in
+  =RELAY_AUTH.txt=.
 
 * SEE ALSO
 *checkpassword-dovecot(8)*, *doveadm-pw(1)*, *qmail-smtpd(8)*

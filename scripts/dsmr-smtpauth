@@ -103,11 +103,15 @@ write_authfile() {
     mv -f "$tmp" "$AUTHFILE"
 }
 
-# The FQDN clients connect to for IMAP and submission. control/me is the qmail
-# host identity; fall back to the system FQDN if it is missing.
+# The FQDN clients connect to for IMAP and submission — the name the server's
+# TLS certificate is valid for, which is not always the MTA's own identity.
+# Prefer control/mailhost; set it when the client-facing name differs from
+# control/me (e.g. a dedicated mail.<domain> the certificate is issued for).
+# Fall back to control/me (the qmail host identity), then the system FQDN.
 derive_mailhost() {
     local h=""
-    [ -s "$QCTL/me" ] && h=$(head -1 "$QCTL/me" | tr -d '[:space:]')
+    [ -s "$QCTL/mailhost" ] && h=$(head -1 "$QCTL/mailhost" | tr -d '[:space:]')
+    [ -n "$h" ] || { [ -s "$QCTL/me" ] && h=$(head -1 "$QCTL/me" | tr -d '[:space:]'); }
     [ -n "$h" ] || h=$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)
     printf '%s' "$h"
 }

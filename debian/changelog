@@ -1,3 +1,12 @@
+dsmr-checkpassword-dovecot (1.0-7) trixie; urgency=medium
+
+  * dsmr-smtpauth: derive the client-facing mail hostname from
+    control/mailhost when present (falling back to control/me), so
+    RELAY_AUTH.txt advertises the name the TLS certificate is valid for
+    rather than the MTA identity.
+
+ -- Brian O'Reilly <fade@deepsky.com>  Sat, 13 Jun 2026 13:00:59 -0400
+
 dsmr-checkpassword-dovecot (1.0-6) trixie; urgency=medium
 
   * dsmr-smtpauth: on add/passwd, write RELAY_AUTH.txt to the user's
