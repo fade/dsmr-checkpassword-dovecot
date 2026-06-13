@@ -1,3 +1,11 @@
+dsmr-checkpassword-dovecot (1.0-6) trixie; urgency=medium
+
+  * dsmr-smtpauth: on add/passwd, write RELAY_AUTH.txt to the user's
+    home with the mail password and step-by-step Thunderbird/Apple Mail
+    client setup; del removes it.
+
+ -- Brian O'Reilly <fade@deepsky.com>  Sat, 13 Jun 2026 11:24:33 -0400
+
 dsmr-checkpassword-dovecot (1.0-5) trixie; urgency=medium
 
   * Generalize the documentation for public reuse: host, domain, and address
