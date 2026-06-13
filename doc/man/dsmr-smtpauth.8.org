@@ -38,13 +38,18 @@ empty: SMTP-AUTH works, IMAP/Maildir is intentionally unavailable.
 
 * RELAY_AUTH.txt
 On *add* and *passwd* for a Unix user, a =RELAY_AUTH.txt= is written to that
-user's home directory containing the cleartext password just set, the server
-hostname and ports, and step-by-step client-setup instructions for Thunderbird
-and Apple Mail. The file is mode =0600= owned by the user, rewritten on every
-password change, and removed by *del* (only if it still carries the tool's
-marker line) so a revoked credential leaves no stale password behind. Users
-with no home directory (relay-only credentials) are skipped, and a write
-failure is a non-fatal warning — the password change itself still succeeds.
+user's home directory containing the cleartext SMTP relay password just set, the
+server hostname and ports, and step-by-step client-setup instructions for
+Thunderbird and Apple Mail. The file documents *two distinct credentials*:
+reading mail over IMAP uses the user's *system login password* (checked by
+dovecot's PAM passdb against the local account), while *SMTP submission* uses the
+separate relay password this tool manages. IMAP therefore logs in with the bare
+system username; submission uses the full =<user>@<domain>= address. The file is
+mode =0600= owned by the user, rewritten on every password change, and removed by
+*del* (only if it still carries the tool's marker line) so a revoked credential
+leaves no stale password behind. Users with no home directory (relay-only
+credentials) are skipped, and a write failure is a non-fatal warning — the
+password change itself still succeeds.
 
 The server hostname is taken from =control/mailhost= when present, else
 =control/me=. Set =control/mailhost= when the name clients connect to — the one

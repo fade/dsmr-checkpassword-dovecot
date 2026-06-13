@@ -15,10 +15,13 @@
 # those users can authenticate for SMTP AUTH but have no Maildir to access.
 #
 # On add/passwd for a Unix user, RELAY_AUTH.txt is written to the user's home
-# directory holding the cleartext password and ready-to-use IMAP/SMTP client
-# settings (with step-by-step Thunderbird and Apple Mail instructions). It is
-# mode 0600, owned by the user, refreshed on every password change, and removed
-# by del so a revoked credential leaves nothing behind.
+# directory holding the cleartext SMTP relay password and ready-to-use client
+# settings (step-by-step Thunderbird and Apple Mail). It documents two distinct
+# credentials: IMAP reading uses the user's system login password (verified by
+# dovecot's PAM passdb), while SMTP submission uses the separate relay password
+# this tool manages. The file is mode 0600, owned by the user, refreshed on
+# every password change, and removed by del so a revoked credential leaves
+# nothing behind.
 #
 # Edits are made under flock(2); a tmp file is written, chowned, and renamed
 # atomically so a partial write cannot leave the file in a broken state.
@@ -129,10 +132,11 @@ derive_maildomain() {
     printf '%s' "$d"
 }
 
-# Write <home>/RELAY_AUTH.txt for a Unix user: the cleartext password plus
-# client-config instructions. Best-effort — a failure here warns but never fails
-# the password change that already succeeded. No-op for a non-Unix (relay-only)
-# credential, which has no home directory.
+# Write <home>/RELAY_AUTH.txt for a Unix user: the relay (SMTP) password plus
+# client-config instructions for both reading (IMAP, system login password) and
+# sending (SMTP, this relay password). Best-effort — a failure here warns but
+# never fails the password change that already succeeded. No-op for a non-Unix
+# (relay-only) credential, which has no home directory.
 write_relay_auth() {
     local user="$1" pw="$2"
     local pw_entry uid gid home host domain addr file tmp date
@@ -158,43 +162,58 @@ write_relay_auth() {
     }
     cat > "$tmp" <<EOF
 $RELAY_AUTH_MARKER — KEEP PRIVATE
-This is a mail-only password, separate from your Unix login password. It is
-rewritten every time your mail password is set with dsmr-smtpauth.
 
-  Email address:  $addr
-  Password:       $pw
+Your mailbox uses TWO separate credentials. Don't mix them up:
 
-Server settings (use the SAME address and password for both):
+  Reading mail (IMAP)   Log in as the system user '$user' with the SAME
+                        password you use to log in to $host. This file does
+                        NOT contain that password.
+  Sending mail (SMTP)   Uses the dedicated relay password below — separate
+                        from your login, reset whenever dsmr-smtpauth runs.
+
+  Email address:    $addr
+  Relay password:   $pw      <- for SENDING only, not for reading mail
+
+Server settings:
+
+  Reading (IMAP)              server $host   port 993   security SSL/TLS
+      username  $user
+      password  your system login password (NOT the relay password)
 
   Sending (SMTP submission)   server $host   port 587   security STARTTLS
-  Reading (IMAP)              server $host   port 993   security SSL/TLS
+      username  $addr
+      password  the relay password shown above
 
-Authentication is required for sending; the From address must be the address
-above. If the server's certificate is self-signed, the client warns once —
-trust/accept it to continue.
+Sending requires authentication and the From address must be $addr. If the
+server's certificate is self-signed your client warns once — accept it.
 
 ------------------------------------------------------------------------
 Thunderbird
   1. Account Settings -> Account Actions -> Add Mail Account.
-  2. Your name: anything.  Email address: $addr.  Password: (above).
-  3. Click "Configure manually" and set both servers:
-       Incoming   IMAP   Server $host   Port 993   SSL/TLS    Normal password
-       Outgoing   SMTP   Server $host   Port 587   STARTTLS   Normal password
-       Username (incoming AND outgoing): $addr
-  4. Re-test, then Done.  Accept the certificate if prompted.
+  2. Your name: anything.  Email address: $addr.
+  3. Click "Configure manually" and set the two servers independently:
+       Incoming  IMAP  Server $host  Port 993  SSL/TLS   Normal password
+           Username  $user      Password  your system login password
+       Outgoing  SMTP  Server $host  Port 587  STARTTLS  Normal password
+           Username  $addr      Password  the relay password above
+  4. Re-test, then Done.  Incoming and outgoing use DIFFERENT usernames and
+     DIFFERENT passwords — that is intentional.
 
 Apple Mail (macOS)
   1. Mail -> Settings -> Accounts -> "+" -> Other Mail Account.
-  2. Name: anything.  Email: $addr.  Password: (above).  Sign In.
-  3. Auto-detect fails; continue to the manual screen and set:
+  2. Name: anything.  Email: $addr.  (Enter your system login password when
+     prompted; you will set the outgoing password separately in step 4.)
+  3. Continue past auto-detect to the manual screen:
        Account type:           IMAP
        Incoming mail server:   $host
        Outgoing mail server:   $host
-       User name:              $addr
-  4. Open Accounts -> (this account) -> Server Settings and turn OFF
-     "Automatically manage connection settings", then set:
-       Incoming (IMAP):  Port 993, Use TLS/SSL ON, Authentication Password
-       Outgoing (SMTP):  Port 587, Use TLS/SSL ON, Authentication Password
+       User name (incoming):   $user
+  4. Accounts -> (this account) -> Server Settings, turn OFF "Automatically
+     manage connection settings", then set:
+       Incoming (IMAP):  User name $user, your system login password,
+                         Port 993, TLS/SSL ON, Authentication: Password
+       Outgoing (SMTP):  User name $addr, the relay password above,
+                         Port 587, TLS/SSL ON, Authentication: Password
   5. Save.  Trust the certificate if prompted.
 ------------------------------------------------------------------------
 Generated $date by dsmr-smtpauth on $host.
